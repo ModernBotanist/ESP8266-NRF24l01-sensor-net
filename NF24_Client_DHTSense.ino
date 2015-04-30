@@ -34,9 +34,12 @@ ISR(WDT_vect) { Sleepy::watchdogEvent(); } // Setup the watchdog for sleeping
 
 uint8_t data[25] = {0};
 char toSendChar[25] = {0};
-int ho = 0;
-int to = 0;
-
+byte ho = 0;
+byte to = 0;
+byte t[10] = {0}; //array to store last 10 temp points
+byte counter = 0; //counter for above, needs to start at zero
+int Tave; //storeing rolling temp average
+byte range = 6; //degrees new temp measure can be off from average to be considered OK
 
 void setup() 
 {
@@ -45,11 +48,27 @@ void setup()
     Serial.println("init failed");
   // Defaults after init are 2.402 GHz (channel 2), 2Mbps, 0dBm
   
-  //keep 2Mbps, but lower power output
-  //driver.setRF(RH_NRF24::DataRate2Mbps, RH_NRF24::TransmitPowerm12dBm);
-  
   
   dht.setup(3); //pin 3
+  
+  //populate array with things close to real temp
+  byte i = 0;
+  while (i<10) {
+      delay(dht.getMinimumSamplingPeriod());
+      byte k = dht.getTemperature();
+      
+      if (!(isnan(k) || (k == 0))) { //k is not NaN nor 0
+          t[i] = k; //store that temp
+          i++;
+      }
+  }
+  
+    //Find average
+    Tave = 0;
+    for (byte i = 0; i<10; i++) {
+      Tave += t[i]; //sum into Tave
+    }
+    Tave /= 10; //holds first average
   
 }
 
@@ -61,6 +80,7 @@ void loop()
   ho = dht.getHumidity();
   to = dht.getTemperature();
   
+  
   if(isnan(to)||isnan(ho)) { //numbers are bad, try once more
     delay(dht.getMinimumSamplingPeriod());
     ho = dht.getHumidity();
@@ -68,20 +88,27 @@ void loop()
   }
  
   /*Sometimes values are zero and not NaN. These are false,
-    the DHT11 cannot measure 0% RH. Both H and T are zero
-    together, and since T might actually be zero, just test H
+    the DHT11 cannot measure 0% RH. But sometimes temp can be unusually
+    low, 20 degrees below surrounding data points. 
     */
+    
+    //boolean temp = false; //reset the value at the beginning of loop
+    boolean temp = abs(to - Tave)<range; //new measurement not more than 5 degrees off average
+    
   
   if( (isnan(to)||isnan(ho)) == false) { //if the numbers are good
-      if (ho != 0) { //data good
+      if ((ho != 0)&&temp) { //data good
             Send();
       } else { //humidity is zero, so data bad
+      
           delay(dht.getMinimumSamplingPeriod()); //try again
           ho = dht.getHumidity();
           to = dht.getTemperature();
-      
+          
+          temp = abs(to - Tave)<range; //test again
+          
           if( (isnan(to)||isnan(ho)) == false) { //if second try was still numbers
-              if (ho != 0) { //And they are not zero
+              if ((ho != 0)&&temp) { //And they are not zero
                   Send();
           }}}
       
@@ -98,11 +125,30 @@ void loop()
     
 }
 
-
+/*In Send() we both send the good data, and store the good data. Since
+by the time we've gotten here, we've tested the validity of the data
+enough to send it, so we also store it and reclac the new average temp.
+*/
 void Send() 
 {
-    driver.setModeRx();
-    delay(200);
+    driver.setModeRx(); //wake up radio
+    
+    if (counter >= 9) { //reset to wrap around
+        counter = 0;
+    } else {
+      counter++; //increment
+    }
+    
+    t[counter] = to; //store new temp value
+        
+    
+    Tave = 0; //clear average
+    for (byte i = 0; i<10; i++) {
+      Tave += t[i]; //sum into Tave
+    }
+    Tave /= 10; //holds new average
+    
+    
   
     String toSend = "ho=" + String(ho) + "\r\n" + "to=" + String(to);
     //Serial.println(toSend);
