@@ -32,14 +32,10 @@ DHT dht; //initialize DHT for humidity/temp
 
 ISR(WDT_vect) { Sleepy::watchdogEvent(); } // Setup the watchdog for sleeping
 
-uint8_t data[25] = {0};
-char toSendChar[25] = {0};
+uint8_t data[10] = {0};
+char toSendChar[10] = {0};
 byte ho = 0;
 byte to = 0;
-byte t[10] = {0}; //array to store last 10 temp points
-byte counter = 0; //counter for above, needs to start at zero
-int Tave; //storeing rolling temp average
-byte range = 6; //degrees new temp measure can be off from average to be considered OK
 
 void setup() 
 {
@@ -51,24 +47,6 @@ void setup()
   
   dht.setup(3); //pin 3
   
-  //populate array with things close to real temp
-  byte i = 0;
-  while (i<10) {
-      delay(dht.getMinimumSamplingPeriod());
-      byte k = dht.getTemperature();
-      
-      if (!(isnan(k) || (k == 0))) { //k is not NaN nor 0
-          t[i] = k; //store that temp
-          i++;
-      }
-  }
-  
-    //Find average
-    Tave = 0;
-    for (byte i = 0; i<10; i++) {
-      Tave += t[i]; //sum into Tave
-    }
-    Tave /= 10; //holds first average
   
 }
 
@@ -92,12 +70,10 @@ void loop()
     low, 20 degrees below surrounding data points. 
     */
     
-    //boolean temp = false; //reset the value at the beginning of loop
-    boolean temp = abs(to - Tave)<range; //new measurement not more than 5 degrees off average
-    
+   
   
   if( (isnan(to)||isnan(ho)) == false) { //if the numbers are good
-      if ((ho != 0)&&temp) { //data good
+      if ((ho != 0) && (to > 3)) { //data good
             Send();
       } else { //humidity is zero, so data bad
       
@@ -105,10 +81,9 @@ void loop()
           ho = dht.getHumidity();
           to = dht.getTemperature();
           
-          temp = abs(to - Tave)<range; //test again
           
           if( (isnan(to)||isnan(ho)) == false) { //if second try was still numbers
-              if ((ho != 0)&&temp) { //And they are not zero
+              if ((ho != 0) && (to > 3)) { //And they are not zero
                   Send();
           }}}
       
@@ -125,40 +100,31 @@ void loop()
     
 }
 
-/*In Send() we both send the good data, and store the good data. Since
-by the time we've gotten here, we've tested the validity of the data
-enough to send it, so we also store it and reclac the new average temp.
-*/
+/*In Send() we send the good data*/
+
 void Send() 
 {
     driver.setModeRx(); //wake up radio
-    
-    if (counter >= 9) { //reset to wrap around
-        counter = 0;
-    } else {
-      counter++; //increment
-    }
-    
-    t[counter] = to; //store new temp value
-        
-    
-    Tave = 0; //clear average
-    for (byte i = 0; i<10; i++) {
-      Tave += t[i]; //sum into Tave
-    }
-    Tave /= 10; //holds new average
-    
-    
+    //delay(200);
   
-    String toSend = "ho=" + String(ho) + "\r\n" + "to=" + String(to);
+    String toSend = "ho=" + String(ho);
     //Serial.println(toSend);
-    toSend.toCharArray(toSendChar,25); //create a char array of the string
+    toSend.toCharArray(toSendChar,10); //create a char array of the string
   
-    memcpy(data, toSendChar, 25); //copy the char array memory space to the data array
+    memcpy(data, toSendChar, 10); //copy the char array memory space to the data array
   
     // Dont put this on the stack:
     //uint8_t buf[RH_NRF24_MAX_MESSAGE_LEN];
   
     manager.sendtoWait(data, sizeof(data), SERVER_ADDRESS); //SEND
+    delay(500);
+    
+    
+    //Send Temperature data separetly  
+    toSend = "to=" + String(to);
+    toSend.toCharArray(toSendChar,10); //create a char array of the string
+  
+    memcpy(data, toSendChar, 10); //copy the char array memory space to the data array
+  
+    manager.sendtoWait(data, sizeof(data), SERVER_ADDRESS); //SEND"to=" + String(to);
 }
-
